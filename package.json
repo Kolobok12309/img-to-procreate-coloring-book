@@ -1,0 +1,26 @@
+{
+  "name": "img-to-procreate-coloring-book",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "typecheck": "nuxi typecheck",
+    "verify": "bun scripts/verify-output.ts verify-out",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "lzo1x": "^1.0.1",
+    "nuxt": "^4.6.4",
+    "vue": "^3.5.45",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^6.0.3",
+    "vue-tsc": "^3.3.14"
+  }
+}
