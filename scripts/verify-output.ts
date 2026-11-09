@@ -53,6 +53,23 @@ check('thick dark fill is not contour', blob.contour[(55 * W + 55) * 4 + 3] === 
 check('thick dark fill enters palette', blob.palette.some(([r, g, b]) => Math.max(r, g, b) < 40), JSON.stringify(blob.palette))
 check('dark-ish blue fill kept as colour, not line', result.contour[(210 * W + 350) * 4 + 3] === 0)
 
+{
+  const w2 = 900, h2 = 600
+  const thickLine = new Uint8ClampedArray(w2 * h2 * 4).fill(255)
+  const midFills: [number, number, number][] = [[70, 120, 220], [90, 190, 90]]
+  ;([[250, 300, 200], [650, 300, 180]] as const).forEach(([cx, cy, r], k) => {
+    for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++) {
+      const d = Math.hypot(x - cx, y - cy)
+      const c = d <= r - 4 ? midFills[k]! : d <= r + 3 ? [15, 15, 15] : null
+      if (!c) continue
+      const i = (y * w2 + x) * 4
+      thickLine[i] = c[0]!; thickLine[i + 1] = c[1]!; thickLine[i + 2] = c[2]!
+    }
+  })
+  const thick = processImage({ width: w2, height: h2, data: thickLine }, { ...defaultOptions, mode: 'auto' })
+  check('auto detects lineart with 7px strokes around mid-dark fills', thick.mode === 'lineart', thick.mode)
+}
+
 const gen = processImage({ width: W, height: H, data }, { ...defaultOptions, colors: 5, mode: 'generate' })
 let genPx = 0
 for (let i = 0; i < W * H; i++) if (gen.contour[i * 4 + 3]! > 0) genPx++

@@ -98,30 +98,26 @@ function flatten(img: RGBAImage) {
   return { rgb, L }
 }
 
+export function strokeRadius(width: number, height: number) {
+  return Math.max(3, Math.round(Math.min(width, height) / 150))
+}
+
 /**
  * Heuristic: an image "has lineart" when a modest share of pixels is very dark
- * and most of those dark pixels sit next to light pixels (thin strokes, not big dark fills).
+ * and most of those dark pixels lie within a stroke half-width of a non-dark pixel
+ * (thin strokes, not big dark fills).
  */
 export function detectLineart(width: number, height: number, L: Float32Array, threshold: number): boolean {
   const n = width * height
-  let dark = 0, thin = 0
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x
-      if (L[i]! >= threshold) continue
-      dark++
-      let near = false
-      for (let k = 1; k <= 3 && !near; k++) {
-        if ((x - k >= 0 && L[i - k]! > threshold + 25)
-          || (x + k < width && L[i + k]! > threshold + 25)
-          || (y - k >= 0 && L[i - k * width]! > threshold + 25)
-          || (y + k < height && L[i + k * width]! > threshold + 25)) near = true
-      }
-      if (near) thin++
-    }
-  }
-  const ratio = dark / n
-  return ratio > 0.003 && ratio < 0.35 && thin / Math.max(dark, 1) > 0.6
+  const dark = new Uint8Array(n)
+  let darkCount = 0
+  for (let i = 0; i < n; i++) if (L[i]! < threshold) { dark[i] = 1; darkCount++ }
+  const depth = chessboardDistance(dark, width, height)
+  const maxDepth = strokeRadius(width, height) + 2
+  let thin = 0
+  for (let i = 0; i < n; i++) if (dark[i] && depth[i]! <= maxDepth) thin++
+  const ratio = darkCount / n
+  return ratio > 0.003 && ratio < 0.35 && thin / Math.max(darkCount, 1) > 0.6
 }
 
 export function kmeans(samples: Float32Array, k: number, seed = 1, iterations = 16): Float32Array {
@@ -327,7 +323,7 @@ export function processImage(img: RGBAImage, opts: ProcessOptions): ProcessResul
   if (mode === 'lineart') {
     for (let i = 0; i < n; i++) if (L[i]! < thr) isLine[i] = 1
     // Morphological opening: dark areas thicker than a stroke are fills (e.g. black hair), not lines.
-    const k = Math.max(3, Math.round(Math.min(width, height) / 150))
+    const k = strokeRadius(width, height)
     const depth = chessboardDistance(isLine, width, height)
     const thick = new Uint8Array(n)
     for (let i = 0; i < n; i++) thick[i] = depth[i]! > k ? 1 : 0
