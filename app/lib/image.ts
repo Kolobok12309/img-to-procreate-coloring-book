@@ -105,7 +105,8 @@ export function strokeRadius(width: number, height: number) {
 /**
  * Heuristic: an image "has lineart" when a modest share of pixels is very dark
  * and most of those dark pixels lie within a stroke half-width of a non-dark pixel
- * (thin strokes, not big dark fills).
+ * (thin strokes, not big dark fills), and the rest of the picture is mostly flat colour
+ * (photos have texture: ~0.6 flat vs ~0.98 for drawings, even JPEG-compressed ones).
  */
 export function detectLineart(width: number, height: number, L: Float32Array, threshold: number): boolean {
   const n = width * height
@@ -117,7 +118,19 @@ export function detectLineart(width: number, height: number, L: Float32Array, th
   let thin = 0
   for (let i = 0; i < n; i++) if (dark[i] && depth[i]! <= maxDepth) thin++
   const ratio = darkCount / n
-  return ratio > 0.003 && ratio < 0.35 && thin / Math.max(darkCount, 1) > 0.6
+  if (!(ratio > 0.003 && ratio < 0.35 && thin / Math.max(darkCount, 1) > 0.6)) return false
+  let light = 0, flat = 0
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x
+      const l = L[i]!
+      if (l < threshold) continue
+      light++
+      const g = Math.max(Math.abs(l - L[i - 1]!), Math.abs(l - L[i + 1]!), Math.abs(l - L[i - width]!), Math.abs(l - L[i + width]!))
+      if (g <= 3) flat++
+    }
+  }
+  return flat / Math.max(light, 1) > 0.8
 }
 
 export function kmeans(samples: Float32Array, k: number, seed = 1, iterations = 16): Float32Array {

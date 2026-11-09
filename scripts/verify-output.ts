@@ -3,7 +3,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { unzipSync, strFromU8 } from 'fflate'
+import { readFileSync } from 'node:fs'
+import { gunzipSync, unzipSync, strFromU8 } from 'fflate'
 import { lzo1xDecompress } from 'lzo1x'
 import { processImage, defaultOptions } from '../app/lib/image'
 import { buildColoringBook } from '../app/lib/coloringBook'
@@ -68,6 +69,14 @@ check('dark-ish blue fill kept as colour, not line', result.contour[(210 * W + 3
   })
   const thick = processImage({ width: w2, height: h2, data: thickLine }, { ...defaultOptions, mode: 'auto' })
   check('auto detects lineart with 7px strokes around mid-dark fills', thick.mode === 'lineart', thick.mode)
+}
+
+{
+  const raw = gunzipSync(readFileSync(new URL('./fixtures/photo-360.rgba.gz', import.meta.url)))
+  const dv = new DataView(raw.buffer, raw.byteOffset)
+  const pw = dv.getUint32(0, true), ph = dv.getUint32(4, true)
+  const photo = processImage({ width: pw, height: ph, data: new Uint8ClampedArray(raw.subarray(8)) }, { ...defaultOptions, mode: 'auto' })
+  check('auto picks generated contour for a photo (Unsplash via picsum)', photo.mode === 'generate', photo.mode)
 }
 
 const gen = processImage({ width: W, height: H, data }, { ...defaultOptions, colors: 5, mode: 'generate' })
