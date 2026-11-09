@@ -1,5 +1,5 @@
 import { zipSync, type Zippable } from 'fflate'
-import { lzo1xCompress } from 'lzo1x'
+import { compressBlock, compressBound } from 'lz4js'
 import { KeyedArchive, Real, type UID } from './bplist'
 import { SRGB_ICC_BASE64 } from './srgbIcc'
 
@@ -73,10 +73,47 @@ export function encodeTiles(pixels: Uint8ClampedArray, width: number, height: nu
           if (y > maxY) maxY = y
         }
       }
-      if (any) files[`${col}~${row}.chunk`] = lzo1xCompress(tile)
+      if (any) files[`${col}~${row}.lz4`] = encodeAppleLz4(tile)
     }
   }
   return { files, rect: maxX < 0 ? null : [minX, minY, maxX - minX + 1, maxY - minY + 1] }
+}
+
+function encodeAppleLz4(tile: Uint8Array): Uint8Array {
+  const blocks: Uint8Array[] = []
+  let size = 4
+  for (let offset = 0; offset < tile.length; offset += 65536) {
+    const raw = tile.subarray(offset, offset + 65536)
+    const compressed = new Uint8Array(compressBound(raw.length))
+    const count = compressBlock(raw, compressed, 0, raw.length, new Uint32Array(65536))
+    let payload: Uint8Array
+    if (count) payload = compressed.subarray(0, count)
+    else {
+      const extra: number[] = []
+      if (raw.length >= 15) {
+        let remaining = raw.length - 15
+        while (remaining >= 255) { extra.push(255); remaining -= 255 }
+        extra.push(remaining)
+      }
+      payload = new Uint8Array(1 + extra.length + raw.length)
+      payload[0] = Math.min(raw.length, 15) << 4
+      payload.set(extra, 1)
+      payload.set(raw, 1 + extra.length)
+    }
+    const block = new Uint8Array(12 + payload.length)
+    block.set([98, 118, 52, 49])
+    const header = new DataView(block.buffer)
+    header.setUint32(4, raw.length, true)
+    header.setUint32(8, payload.length, true)
+    block.set(payload, 12)
+    blocks.push(block)
+    size += block.length
+  }
+  const frame = new Uint8Array(size)
+  let offset = 0
+  for (const block of blocks) { frame.set(block, offset); offset += block.length }
+  frame.set([98, 118, 52, 36], offset)
+  return frame
 }
 
 function f64(values: number[]) {

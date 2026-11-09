@@ -29,4 +29,4 @@ npm run verify   # синтетический тест конвейера и ф�
 
 ## Формат
 
-`.procreate` — zip с `Document.archive` (NSKeyedArchiver bplist, `SilicaDocument`), `QuickLook/Thumbnail.png` и тайлами 256×256 `{col}~{row}.chunk` (LZO1X, premultiplied RGBA, строки снизу вверх). Структура повторяет реальные файлы Procreate; описание формата — [topsd/procreate-format](https://github.com/topsd/procreate-format). Цветовой профиль — sRGB ([Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles), CC0).
+`.procreate` — zip с `Document.archive` (NSKeyedArchiver bplist, `SilicaDocument`), `QuickLook/Thumbnail.png` и тайлами 256×256 `{col}~{row}.lz4` (Apple-framed LZ4, premultiplied RGBA, строки снизу вверх). Структура повторяет реальные файлы Procreate; описание формата — [topsd/procreate-format](https://github.com/topsd/procreate-format). Цветовой профиль — sRGB ([Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles), CC0).

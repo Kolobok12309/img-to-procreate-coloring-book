@@ -5,10 +5,10 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { gunzipSync, unzipSync, strFromU8 } from 'fflate'
-import { lzo1xDecompress } from 'lzo1x'
+import { decompressBlock } from 'lz4js'
 import { processImage, defaultOptions } from '../app/lib/image'
-import { buildColoringBook } from '../app/lib/coloringBook'
-import { TILE } from '../app/lib/procreate'
+import { buildColoringBook, compositeContourOnWhite, whitePixels } from '../app/lib/coloringBook'
+import { TILE, encodeTiles } from '../app/lib/procreate'
 
 const outDir = process.argv[2] ?? 'verify-out'
 mkdirSync(outDir, { recursive: true })
@@ -107,26 +107,79 @@ check('one layer hidden (reference)', (plutil.stdout.match(/"hidden" => true/g) 
 
 const layerDirs = new Map<string, string[]>()
 for (const n of names) {
-  const m = n.match(/^([0-9A-F-]{36})\/(\d+)~(\d+)\.chunk$/)
+  const m = n.match(/^([0-9A-F-]{36})\/(\d+)~(\d+)\.lz4$/)
   if (m) layerDirs.set(m[1]!, [...(layerDirs.get(m[1]!) ?? []), n])
 }
 check('tile dirs: contour, reference, white, composite', layerDirs.size === 4, `${layerDirs.size}`)
+check('coloring layer starts empty', !names.some(n => n.startsWith(`${book.uuids[1]}/`)))
+
+function decodeAppleLz4(frame: Uint8Array): Uint8Array {
+  const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength)
+  const blocks: Uint8Array[] = []
+  let offset = 0, total = 0
+  while (offset < frame.length) {
+    const magic = String.fromCharCode(...frame.subarray(offset, offset + 4))
+    if (magic === 'bv4$') {
+      if (offset + 4 !== frame.length) throw new Error('trailing bytes after LZ4 terminator')
+      const decoded = new Uint8Array(total)
+      let start = 0
+      for (const block of blocks) { decoded.set(block, start); start += block.length }
+      return decoded
+    }
+    if (magic !== 'bv41') throw new Error(`unexpected LZ4 block ${magic}`)
+    const rawSize = view.getUint32(offset + 4, true)
+    const compressedSize = view.getUint32(offset + 8, true)
+    const block = new Uint8Array(rawSize)
+    const written = decompressBlock(frame, block, offset + 12, compressedSize, 0)
+    if (written !== rawSize) throw new Error(`LZ4 block decoded ${written} of ${rawSize} bytes`)
+    blocks.push(block)
+    total += rawSize
+    offset += 12 + compressedSize
+  }
+  throw new Error('LZ4 terminator missing')
+}
+
+const smallTile = encodeTiles(new Uint8ClampedArray([35, 70, 105, 255]), 1, 1).files['0~0.lz4']
+check('single-pixel fallback is a valid Apple LZ4 frame',
+  !!smallTile && decodeAppleLz4(smallTile).every((value, index) => value === [35, 70, 105, 255][index]))
 
 const colsN = Math.ceil(W / TILE), rowsN = Math.ceil(H / TILE)
-const refIdx = book.layerOrder.indexOf('Референс')
-const refUuid = book.uuids[refIdx]!
-let mismatches = 0, tiles = 0
-for (let row = 0; row < rowsN; row++) for (let col = 0; col < colsN; col++) {
-  const tw = Math.min(TILE, W - col * TILE), th = Math.min(TILE, H - row * TILE)
-  const raw = lzo1xDecompress(files[`${refUuid}/${col}~${row}.chunk`]!, tw * th * 4)
-  tiles++
-  for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++) {
-    const src = ((H - 1 - (row * TILE + ty)) * W + col * TILE + tx) * 4
-    const d = (ty * tw + tx) * 4
-    for (let c = 0; c < 4; c++) if (raw[d + c] !== result.colored[src + c]) mismatches++
+const expectedLayers = [
+  result.contour,
+  null,
+  result.colored,
+  whitePixels(W * H),
+  compositeContourOnWhite(result.contour),
+] as const
+let mismatches = 0, tiles = 0, missing = 0
+for (let layer = 0; layer < expectedLayers.length; layer++) {
+  const expected = expectedLayers[layer]
+  if (!expected) continue
+  const folder = layer === 4 ? [...layerDirs.keys()].find(id => !book.uuids.includes(id)) : book.uuids[layer]
+  for (let row = 0; row < rowsN; row++) for (let col = 0; col < colsN; col++) {
+    const tw = Math.min(TILE, W - col * TILE), th = Math.min(TILE, H - row * TILE)
+    const entry = files[`${folder}/${col}~${row}.lz4`]
+    let hasPixels = false
+    for (let ty = 0; ty < th && !hasPixels; ty++) for (let tx = 0; tx < tw; tx++) {
+      if (expected[((H - 1 - (row * TILE + ty)) * W + col * TILE + tx) * 4 + 3]) {
+        hasPixels = true
+        break
+      }
+    }
+    if (!entry) { if (hasPixels) missing++; continue }
+    const raw = decodeAppleLz4(entry)
+    tiles++
+    if (raw.length !== tw * th * 4) { mismatches++; continue }
+    for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++) {
+      const src = ((H - 1 - (row * TILE + ty)) * W + col * TILE + tx) * 4
+      const d = (ty * tw + tx) * 4
+      const alpha = expected[src + 3]!
+      for (let c = 0; c < 3; c++) if (raw[d + c] !== Math.round(expected[src + c]! * alpha / 255)) mismatches++
+      if (raw[d + 3] !== alpha) mismatches++
+    }
   }
 }
-check('reference tiles round-trip through LZO to exact pixels', mismatches === 0 && tiles === colsN * rowsN, `${tiles} tiles, ${mismatches} mismatched bytes`)
+check('all populated layers decode with Apple LZ4 to exact pixels', mismatches === 0 && tiles > colsN * rowsN * 3 && missing === 0, `${tiles} tiles, ${missing} missing, ${mismatches} mismatched bytes`)
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS')
 process.exit(failures ? 1 : 0)
